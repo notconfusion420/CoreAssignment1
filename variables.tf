@@ -5,3 +5,8 @@ variable "region" {
 variable "name" {
   default = "hub-spoke"
 }
+variable "tags" {
+  description = "Extra tags applied to all modules"
+  type        = map(string)
+  default     = {}
+}

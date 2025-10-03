@@ -54,3 +54,12 @@ module "data" {
 }
 
 
+module "monitoring" {
+  source     = "./modules/monitoring"
+  name       = "mon"
+  vpc_id     = module.hub.vpc_id
+  subnet_id  = module.hub.public_subnet_ids[0]   # now works
+  key_name   = "my-ssh-key"                      # modify this to the EC2 instance ssh key after applying 
+  allowed_cidrs = ["YOUR.IP.ADDR/32"]            # restrict to your laptop IP
+  tags       = var.tags
+}
