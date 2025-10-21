@@ -9,7 +9,13 @@ module "hub" {
   region             = var.region
   tgw_id             = module.tgw.id
   tgw_route_table_id = module.tgw.route_table_id
-  spoke_cidrs        = ["10.1.0.0/16", "10.2.0.0/16", "10.3.0.0/16"] # App, DB, Data
+  spoke_cidrs        = ["10.1.0.0/16", "10.2.0.0/16", "10.3.0.0/16"]
+}
+
+resource "aws_ec2_transit_gateway_route" "default_to_hub" {
+  transit_gateway_route_table_id = module.tgw.route_table_id
+  destination_cidr_block         = "0.0.0.0/0"
+  transit_gateway_attachment_id  = module.hub.tgw_attachment_id
 }
 
 module "app" {
@@ -22,44 +28,53 @@ module "app" {
   tgw_id             = module.tgw.id
   tgw_route_table_id = module.tgw.route_table_id
   spoke_cidrs        = ["10.0.0.0/16", "10.2.0.0/16", "10.3.0.0/16"]
-  tags = {
+  tags               = {
     Owner = "fares"
     Env   = "dev"
   }
+  hub_dns_ip               = module.hub.dns_instance_private_ip
+  enable_gateway_endpoints = true
 }
 
 module "db" {
   source             = "./modules/db-vpc"
   name               = "db"
+  vpc_cidr           = "10.2.0.0/16"
+  az_a               = "eu-central-1a"
+  az_b               = "eu-central-1b"
   region             = var.region
   tgw_id             = module.tgw.id
   tgw_route_table_id = module.tgw.route_table_id
-  spoke_cidrs        = ["10.0.0.0/16", "10.1.0.0/16", "10.3.0.0/16"] # Hub, App, Data
-  rds_password       = "ChangeMeNOW_SuperSecret123!"
+  spoke_cidrs        = ["10.0.0.0/16", "10.1.0.0/16", "10.3.0.0/16"]
+  tags               = { Owner = "fares", Env = "dev" }
+  hub_dns_ip                 = module.hub.dns_instance_private_ip
+  enable_s3_gateway_endpoint = true
+  rds_password               = "ChangeMeNOW_SuperSecret123!"
 }
+
 
 module "data" {
   source             = "./modules/data-vpc"
   name               = "data"
-  vpc_cidr           = "10.3.0.0/16"   # Data VPC CIDR
+  vpc_cidr           = "10.3.0.0/16"
   az_a               = "eu-central-1a"
   az_b               = "eu-central-1b"
   tgw_id             = module.tgw.id
   tgw_route_table_id = module.tgw.route_table_id
-  spoke_cidrs        = ["10.0.0.0/16", "10.1.0.0/16", "10.2.0.0/16"] # Hub, App, DB
-  tags               = {
-    Owner = "fares"
-    Env   = "dev"
-  }
+  spoke_cidrs        = ["10.0.0.0/16", "10.1.0.0/16", "10.2.0.0/16"]
+  tags               = { Owner = "fares", Env = "dev" }
+  hub_dns_ip               = module.hub.dns_instance_private_ip
+  enable_gateway_endpoints = true
+  region                   = var.region
 }
 
 
 module "monitoring" {
-  source     = "./modules/monitoring"
-  name       = "mon"
-  vpc_id     = module.hub.vpc_id
-  subnet_id  = module.hub.public_subnet_ids[0]   # now works
-  key_name   = "my-ssh-key"                      # modify this to the EC2 instance ssh key after applying 
-  allowed_cidrs = ["YOUR.IP.ADDR/32"]            # restrict to your laptop IP
-  tags       = var.tags
+  source        = "./modules/monitoring"
+  name          = "mon"
+  vpc_id        = module.hub.vpc_id
+  subnet_id     = module.hub.public_subnet_ids[0]
+  key_name      = "my-ssh-key"
+  allowed_cidrs = ["85.145.236.171/32"]
+  tags          = var.tags
 }

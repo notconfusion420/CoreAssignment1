@@ -14,3 +14,7 @@ output "cloudfront_domain_name" {
   value       = var.enable_s3 && var.enable_cloudfront ? aws_cloudfront_distribution.this[0].domain_name : null
   description = "CloudFront domain (if enabled)"
 }
+
+output "dhcp_options_id" {
+  value = aws_vpc_dhcp_options.dns.id
+}

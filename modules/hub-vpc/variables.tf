@@ -48,3 +48,28 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+
+variable "nat_instance_type" {
+  description = "Instance type for NAT EC2"
+  type        = string
+  default     = "t3.nano"
+}
+
+variable "dns_instance_type" {
+  description = "Instance type for dnsmasq EC2"
+  type        = string
+  default     = "t3.nano"
+}
+
+variable "allow_ssh_cidr" {
+  description = "Optional CIDR for SSH to EC2s (empty = no SSH rule; use SSM)"
+  type        = string
+  default     = ""
+}
+
+variable "dns_forwarder_ip" {
+  description = "Upstream DNS for dnsmasq (10.0.0.2 = AmazonProvidedDNS in this VPC range)"
+  type        = string
+  default     = "10.0.0.2"
+}

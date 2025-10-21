@@ -162,3 +162,8 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "hub_dns_ip" {
+  description = "Private IP of the hub dnsmasq EC2 used as primary DNS"
+  type        = string
+}

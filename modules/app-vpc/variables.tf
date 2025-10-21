@@ -45,3 +45,17 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+
+# Hub DNS EC2 private IP (from hub module output dns_instance_private_ip)
+variable "hub_dns_ip" {
+  description = "Private IP of the hub dnsmasq EC2 used as primary DNS via DHCP options"
+  type        = string
+}
+
+# Toggle cheap Gateway VPC Endpoints (S3/DynamoDB) to reduce NAT $/GB
+variable "enable_gateway_endpoints" {
+  description = "Create S3/DynamoDB Gateway VPC Endpoints in this spoke"
+  type        = bool
+  default     = true
+}

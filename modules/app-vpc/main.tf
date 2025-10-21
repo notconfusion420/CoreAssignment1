@@ -13,11 +13,9 @@ resource "aws_vpc" "this" {
   tags                 = merge(local.tags, { Component = "vpc" })
 }
 
-
 # -----------------------------
 # Subnets
 # -----------------------------
-
 # DMZ subnets for ALB (public, has IGW)
 resource "aws_subnet" "dmz_a" {
   vpc_id                  = aws_vpc.this.id
@@ -35,7 +33,7 @@ resource "aws_subnet" "dmz_b" {
   tags                    = merge(local.tags, { Tier = "dmz", AZ = var.az_b })
 }
 
-# App subnets for EC2 (private, no IGW; outbound via TGW → Hub NAT)
+# App subnets for EC2 (private; outbound via TGW → Hub NAT)
 resource "aws_subnet" "app_a" {
   vpc_id            = aws_vpc.this.id
   cidr_block        = cidrsubnet(var.vpc_cidr, 8, 2) # 10.1.2.0/24
@@ -70,7 +68,6 @@ resource "aws_route" "dmz_internet" {
   gateway_id             = aws_internet_gateway.igw.id
 }
 
-# Associate BOTH DMZ subnets
 resource "aws_route_table_association" "dmz_assoc_a" {
   subnet_id      = aws_subnet.dmz_a.id
   route_table_id = aws_route_table.dmz.id
@@ -80,7 +77,7 @@ resource "aws_route_table_association" "dmz_assoc_b" {
   route_table_id = aws_route_table.dmz.id
 }
 
-# Private app route table (default via TGW → Hub → NAT)
+# Private app route table (default → TGW → Hub NAT)
 resource "aws_route_table" "app_private" {
   vpc_id = aws_vpc.this.id
   tags   = merge(local.tags, { Tier = "private-app" })
@@ -92,10 +89,6 @@ resource "aws_route" "app_to_internet_via_hub" {
   transit_gateway_id     = var.tgw_id
 }
 
-# (Optional) routes to other spokes can be added here if you want explicit entries,
-# but TGW RT usually handles inter-spoke routing
-
-# Associate BOTH private subnets
 resource "aws_route_table_association" "app_assoc_a" {
   subnet_id      = aws_subnet.app_a.id
   route_table_id = aws_route_table.app_private.id
@@ -106,19 +99,32 @@ resource "aws_route_table_association" "app_assoc_b" {
 }
 
 # -----------------------------
-# TGW Attachment (now multi-AZ)
+# TGW Attachment (multi-AZ)
 # -----------------------------
 resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
   transit_gateway_id = var.tgw_id
   vpc_id             = aws_vpc.this.id
-  subnet_ids         = [aws_subnet.app_a.id, aws_subnet.app_b.id] # HA across AZs
-
-  tags = merge(local.tags, { Component = "tgw-attach" })
+  subnet_ids         = [aws_subnet.app_a.id, aws_subnet.app_b.id]
+  tags               = merge(local.tags, { Component = "tgw-attach" })
 }
 
-############################
+# -----------------------------
+# DNS: Use hub dnsmasq first (fallback = this VPC's AmazonProvidedDNS)
+# -----------------------------
+resource "aws_vpc_dhcp_options" "dns" {
+  # 10.1.0.2 is this VPC's AmazonProvidedDNS for 10.1.0.0/16; used as fallback
+  domain_name_servers = [var.hub_dns_ip, "10.1.0.2"]
+  tags                = merge(local.tags, { Component = "dhcp-dns" })
+}
+
+resource "aws_vpc_dhcp_options_association" "dns_assoc" {
+  vpc_id          = aws_vpc.this.id
+  dhcp_options_id = aws_vpc_dhcp_options.dns.id
+}
+
+# -----------------------------
 # Security Groups
-############################
+# -----------------------------
 # SG for ALB (public-facing)
 resource "aws_security_group" "alb" {
   name        = "${var.name}-alb-sg"
@@ -152,7 +158,7 @@ resource "aws_security_group" "alb" {
   tags = merge(local.tags, { Component = "alb-sg" })
 }
 
-# SG for EC2 (private instances) — only ALB can reach them
+# SG for EC2 (private instances) — only ALB can reach them; egress all (DNS goes to hub)
 resource "aws_security_group" "app_ec2" {
   name        = "${var.name}-ec2-sg"
   description = "Allow traffic from ALB to EC2"
@@ -176,9 +182,9 @@ resource "aws_security_group" "app_ec2" {
   tags = merge(local.tags, { Component = "ec2-sg" })
 }
 
-############################
+# -----------------------------
 # AMI lookup
-############################
+# -----------------------------
 data "aws_ami" "amazon_linux" {
   most_recent = true
   owners      = ["amazon"]
@@ -194,17 +200,16 @@ data "aws_ami" "amazon_linux" {
   }
 }
 
-############################
+# -----------------------------
 # Application Load Balancer
-############################
+# -----------------------------
 resource "aws_lb" "this" {
   name               = "${var.name}-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = [aws_subnet.dmz_a.id, aws_subnet.dmz_b.id]
-
-  tags = merge(local.tags, { Component = "alb" })
+  tags               = merge(local.tags, { Component = "alb" })
 }
 
 resource "aws_lb_target_group" "app" {
@@ -236,16 +241,15 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-############################
+# -----------------------------
 # HA EC2: Launch Template + Auto Scaling Group
-############################
+# -----------------------------
 resource "aws_launch_template" "app" {
-  name_prefix   = "${var.name}-lt-"
-  image_id      = data.aws_ami.amazon_linux.id
-  instance_type = "t3.micro"
-  vpc_security_group_ids = [aws_security_group.app_ec2.id]
+  name_prefix              = "${var.name}-lt-"
+  image_id                 = data.aws_ami.amazon_linux.id
+  instance_type            = "t3.micro"
+  vpc_security_group_ids   = [aws_security_group.app_ec2.id]
 
-  # Optional: give the instances a simple web page to prove traffic flows
   user_data = base64encode(<<-EOF
               #!/bin/bash
               yum update -y
@@ -269,7 +273,7 @@ resource "aws_autoscaling_group" "app" {
   min_size                  = 2
   max_size                  = 4
   desired_capacity          = 2
-  vpc_zone_identifier       = [aws_subnet.app_a.id, aws_subnet.app_b.id] # spread across both AZs
+  vpc_zone_identifier       = [aws_subnet.app_a.id, aws_subnet.app_b.id]
   health_check_type         = "ELB"
   health_check_grace_period = 90
   target_group_arns         = [aws_lb_target_group.app.arn]
@@ -279,19 +283,16 @@ resource "aws_autoscaling_group" "app" {
     version = "$Latest"
   }
 
-  # Tags must be in blocks, not a merge()
   tag {
     key                 = "Name"
     value               = "${var.name}-ec2"
     propagate_at_launch = true
   }
-
   tag {
     key                 = "Component"
     value               = "asg"
     propagate_at_launch = true
   }
-
   tag {
     key                 = "Stack"
     value               = "app-spoke"
@@ -305,3 +306,33 @@ resource "aws_autoscaling_group" "app" {
   depends_on = [aws_lb_listener.http]
 }
 
+# -----------------------------
+# (Optional) Gateway VPC Endpoints to cut NAT data $/GB
+# -----------------------------
+resource "aws_vpc_endpoint" "s3" {
+  count             = var.enable_gateway_endpoints ? 1 : 0
+  vpc_id            = aws_vpc.this.id
+  service_name      = "com.amazonaws.${var.region}.s3"
+  vpc_endpoint_type = "Gateway"
+
+  route_table_ids = [
+    aws_route_table.app_private.id,
+    aws_route_table.dmz.id
+  ]
+
+  tags = merge(local.tags, { Component = "vpce-s3" })
+}
+
+resource "aws_vpc_endpoint" "dynamodb" {
+  count             = var.enable_gateway_endpoints ? 1 : 0
+  vpc_id            = aws_vpc.this.id
+  service_name      = "com.amazonaws.${var.region}.dynamodb"
+  vpc_endpoint_type = "Gateway"
+
+  route_table_ids = [
+    aws_route_table.app_private.id,
+    aws_route_table.dmz.id
+  ]
+
+  tags = merge(local.tags, { Component = "vpce-dynamodb" })
+}
