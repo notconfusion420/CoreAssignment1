@@ -4,11 +4,6 @@ on:
     branches: [ "main" ]
   pull_request:
   workflow_dispatch:
-    inputs:
-      do_destroy:
-        description: "Run terraform destroy"
-        type: boolean
-        default: false
 jobs:
   terraform:
     runs-on: ubuntu-latest
@@ -26,11 +21,7 @@ jobs:
         run: terraform init
       - name: Terraform Validate
         run: terraform validate
-      - name: Terraform Destroy (auto)
-        if: >
-          (github.event_name == 'push' &&
-           (vars.AUTO_DESTROY == 'true' ||
-            contains(github.event.head_commit.message, '[destroy]'))) ||
-          (github.event_name == 'workflow_dispatch' &&
-           (inputs.action == 'destroy'))
-        run: terraform destroy -auto-approve -input=false -lock-timeout=20m -refresh=true -var-file=envs/prod.tfvars
+      - name: Ensure workspace
+        run: terraform workspace select prod || terraform workspace new prod
+      - name: Terraform Destroy (always)
+        run: terraform destroy -auto-approve -input=false -lock-timeout=20m -refresh=true
