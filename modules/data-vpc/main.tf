@@ -1,3 +1,4 @@
+#An edit 
 locals {
   name = var.name
   tags = merge(var.tags, { Name = local.name, Stack = "data-spoke" })
