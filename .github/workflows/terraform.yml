@@ -23,6 +23,6 @@ jobs:
         run: terraform validate
       - name: Terraform Plan
         run: terraform plan -out=tfplan
-      - name: Terraform Apply or Destroy
+      - name: Terraform Apply or Destroy #manual destroy or apply based on input
         if: ${{ github.event.inputs.do_destroy == 'true' }}
         run: terraform destroy -auto-approve
