@@ -26,10 +26,11 @@ jobs:
         run: terraform init
       - name: Terraform Validate
         run: terraform validate
-      - name: Terraform Destroy (manual)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.do_destroy }}
-        run: |
-          # match the workspace/vars your apply uses
-          terraform workspace select prod || terraform workspace new prod
-          terraform destroy -auto-approve \
-            -var-file=envs/prod.tfvars
+      - name: Terraform Destroy (auto)
+        if: >
+          (github.event_name == 'push' &&
+           (vars.AUTO_DESTROY == 'true' ||
+            contains(github.event.head_commit.message, '[destroy]'))) ||
+          (github.event_name == 'workflow_dispatch' &&
+           (inputs.action == 'destroy'))
+        run: terraform destroy -auto-approve -input=false -lock-timeout=20m -refresh=true -var-file=envs/prod.tfvars
