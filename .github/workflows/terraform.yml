@@ -20,13 +20,10 @@ jobs:
         run: terraform init
       - name: Terraform Validate
         run: terraform validate
-      - name: Terraform Plan
-        run: terraform plan -out=tfplan
-      - name: Upload Plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: tfplan
-      - name: Terraform Apply (main only)
-        if: github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve tfplan
+      - name: Terraform Destroy (manual)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.do_destroy }}
+        run: |
+          # match the workspace/vars your apply uses
+          terraform workspace select prod || terraform workspace new prod
+          terraform destroy -auto-approve \
+            -var-file=envs/prod.tfvars
