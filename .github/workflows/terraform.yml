@@ -3,6 +3,12 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      do_destroy:
+        description: "Run terraform destroy"
+        type: boolean
+        default: false
 jobs:
   terraform:
     runs-on: ubuntu-latest
