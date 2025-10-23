@@ -21,7 +21,11 @@ jobs:
         run: terraform init
       - name: Terraform Validate
         run: terraform validate
-      - name: Ensure workspace
-        run: terraform workspace select prod || terraform workspace new prod
-      - name: Terraform Destroy (always)
-        run: terraform destroy -auto-approve -input=false -lock-timeout=20m -refresh=true
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+      - name: Terraform Apply or Destroy
+        if: ${{ github.event.inputs.do_destroy == 'true' }}
+        run: terraform destroy -auto-approve
+      - name: Terraform Apply
+        if: ${{ github.event.inputs.do_destroy != 'true' }}
+        run: terraform apply -auto-approve tfplan 
