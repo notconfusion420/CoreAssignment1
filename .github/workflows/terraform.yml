@@ -26,6 +26,3 @@ jobs:
       - name: Terraform Apply or Destroy
         if: ${{ github.event.inputs.do_destroy == 'true' }}
         run: terraform destroy -auto-approve
-      - name: Terraform Apply
-        if: ${{ github.event.inputs.do_destroy != 'true' }}
-        run: terraform apply -auto-approve tfplan 
