@@ -1,11 +1,14 @@
 locals {
   name = var.name
-  tags = merge(var.tags, { Name = local.name, Stack = "app-spoke" })
+  tags = merge(
+    try(var.tags, {}),
+    { Name = local.name }
+  )
 }
 
-# ------------------------------
+# -----------------------------
 # VPC
-# ------------------------------
+# -----------------------------
 resource "aws_vpc" "this" {
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
@@ -16,137 +19,100 @@ resource "aws_vpc" "this" {
 # -----------------------------
 # Subnets
 # -----------------------------
-# DMZ subnets for ALB (public, has IGW)
-resource "aws_subnet" "dmz_a" {
+resource "aws_subnet" "public_a" {
   vpc_id                  = aws_vpc.this.id
-  cidr_block              = cidrsubnet(var.vpc_cidr, 8, 1) # 10.1.1.0/24
+  cidr_block              = var.public_a_cidr
   availability_zone       = var.az_a
   map_public_ip_on_launch = true
-  tags                    = merge(local.tags, { Tier = "dmz", AZ = var.az_a })
+  tags                    = merge(local.tags, { Tier = "public", AZ = var.az_a })
 }
 
-resource "aws_subnet" "dmz_b" {
+resource "aws_subnet" "private_a" {
   vpc_id                  = aws_vpc.this.id
-  cidr_block              = cidrsubnet(var.vpc_cidr, 8, 3) # 10.1.3.0/24
-  availability_zone       = var.az_b
-  map_public_ip_on_launch = true
-  tags                    = merge(local.tags, { Tier = "dmz", AZ = var.az_b })
-}
-
-# App subnets for EC2 (private; outbound via TGW → Hub NAT)
-resource "aws_subnet" "app_a" {
-  vpc_id            = aws_vpc.this.id
-  cidr_block        = cidrsubnet(var.vpc_cidr, 8, 2) # 10.1.2.0/24
-  availability_zone = var.az_a
-  tags              = merge(local.tags, { Tier = "private-app", AZ = var.az_a })
-}
-
-resource "aws_subnet" "app_b" {
-  vpc_id            = aws_vpc.this.id
-  cidr_block        = cidrsubnet(var.vpc_cidr, 8, 4) # 10.1.4.0/24
-  availability_zone = var.az_b
-  tags              = merge(local.tags, { Tier = "private-app", AZ = var.az_b })
+  cidr_block              = var.private_a_cidr
+  availability_zone       = var.az_a
+  map_public_ip_on_launch = false
+  tags                    = merge(local.tags, { Tier = "private", AZ = var.az_a })
 }
 
 # -----------------------------
-# IGW + Route Tables
+# Internet Gateway + Routes
 # -----------------------------
-resource "aws_internet_gateway" "igw" {
+resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
   tags   = merge(local.tags, { Component = "igw" })
 }
 
-# Public/DMZ route table (ALB needs internet)
-resource "aws_route_table" "dmz" {
+resource "aws_route_table" "public" {
   vpc_id = aws_vpc.this.id
-  tags   = merge(local.tags, { Tier = "dmz" })
+  tags   = merge(local.tags, { Name = "${local.name}-rt-public" })
 }
 
-resource "aws_route" "dmz_internet" {
-  route_table_id         = aws_route_table.dmz.id
+resource "aws_route" "public_internet" {
+  route_table_id         = aws_route_table.public.id
   destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.igw.id
+  gateway_id             = aws_internet_gateway.this.id
 }
 
-resource "aws_route_table_association" "dmz_assoc_a" {
-  subnet_id      = aws_subnet.dmz_a.id
-  route_table_id = aws_route_table.dmz.id
-}
-resource "aws_route_table_association" "dmz_assoc_b" {
-  subnet_id      = aws_subnet.dmz_b.id
-  route_table_id = aws_route_table.dmz.id
+resource "aws_route_table_association" "public_a" {
+  subnet_id      = aws_subnet.public_a.id
+  route_table_id = aws_route_table.public.id
 }
 
-# Private app route table (default → TGW → Hub NAT)
-resource "aws_route_table" "app_private" {
+# -----------------------------
+# Private Routes + TGW
+# -----------------------------
+resource "aws_route_table" "private" {
   vpc_id = aws_vpc.this.id
-  tags   = merge(local.tags, { Tier = "private-app" })
+  tags   = merge(local.tags, { Name = "${local.name}-rt-private" })
 }
 
-resource "aws_route" "app_to_internet_via_hub" {
-  route_table_id         = aws_route_table.app_private.id
-  destination_cidr_block = "0.0.0.0/0"
+# Routes to Hub/Data/DB via TGW
+resource "aws_route" "to_hub_data_db" {
+  for_each               = toset(var.spoke_cidrs)
+  route_table_id         = aws_route_table.private.id
+  destination_cidr_block = each.value
   transit_gateway_id     = var.tgw_id
 }
 
-resource "aws_route_table_association" "app_assoc_a" {
-  subnet_id      = aws_subnet.app_a.id
-  route_table_id = aws_route_table.app_private.id
-}
-resource "aws_route_table_association" "app_assoc_b" {
-  subnet_id      = aws_subnet.app_b.id
-  route_table_id = aws_route_table.app_private.id
+resource "aws_route_table_association" "private_a" {
+  subnet_id      = aws_subnet.private_a.id
+  route_table_id = aws_route_table.private.id
 }
 
 # -----------------------------
-# TGW Attachment (multi-AZ)
+# TGW Attachment
 # -----------------------------
 resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
+  subnet_ids         = [aws_subnet.private_a.id]
   transit_gateway_id = var.tgw_id
   vpc_id             = aws_vpc.this.id
-  subnet_ids         = [aws_subnet.app_a.id, aws_subnet.app_b.id]
   tags               = merge(local.tags, { Component = "tgw-attach" })
-}
-
-# -----------------------------
-# DNS: Use hub dnsmasq first (fallback = this VPC's AmazonProvidedDNS)
-# -----------------------------
-resource "aws_vpc_dhcp_options" "dns" {
-  # 10.1.0.2 is this VPC's AmazonProvidedDNS for 10.1.0.0/16; used as fallback
-  domain_name_servers = [var.hub_dns_ip, "10.1.0.2"]
-  tags                = merge(local.tags, { Component = "dhcp-dns" })
-}
-
-resource "aws_vpc_dhcp_options_association" "dns_assoc" {
-  vpc_id          = aws_vpc.this.id
-  dhcp_options_id = aws_vpc_dhcp_options.dns.id
 }
 
 # -----------------------------
 # Security Groups
 # -----------------------------
-# SG for ALB (public-facing)
-resource "aws_security_group" "alb" {
-  name        = "${var.name}-alb-sg"
-  description = "Allow HTTP from internet to ALB"
-  vpc_id      = aws_vpc.this.id
+# ALB SG: open 80/443 to internet
+resource "aws_security_group" "alb_sg" {
+  name   = "${local.name}-alb-sg"
+  vpc_id = aws_vpc.this.id
 
   ingress {
-    description = "Allow HTTP"
+    description = "HTTP from internet"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # If/when you add HTTPS:
-  # ingress {
-  #   description = "Allow HTTPS"
-  #   from_port   = 443
-  #   to_port     = 443
-  #   protocol    = "tcp"
-  #   cidr_blocks = ["0.0.0.0/0"]
-  # }
+  ingress {
+    description = "HTTPS from internet"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
   egress {
     from_port   = 0
@@ -155,184 +121,84 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = merge(local.tags, { Component = "alb-sg" })
+  tags = merge(local.tags, { Component = "sg-alb" })
 }
 
-# SG for EC2 (private instances) — only ALB can reach them; egress all (DNS goes to hub)
-resource "aws_security_group" "app_ec2" {
-  name        = "${var.name}-ec2-sg"
-  description = "Allow traffic from ALB to EC2"
+# App EC2 SG: allows traffic from ALB SG
+resource "aws_security_group" "app_ec2_sg" {
+  name        = "${local.name}-app-ec2-sg"
+  description = "App instance SG"
   vpc_id      = aws_vpc.this.id
 
   ingress {
-    description     = "HTTP from ALB"
-    from_port       = 80
-    to_port         = 80
+    description     = "App port from ALB"
+    from_port       = 8080
+    to_port         = 8080
     protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
+    security_groups = [aws_security_group.alb_sg.id]
+  }
+
+  # Wazuh communications
+  egress {
+    description = "TCP 1514 to Hub Wazuh"
+    from_port   = 1514
+    to_port     = 1514
+    protocol    = "tcp"
+    cidr_blocks = [var.hub_vpc_cidr]
   }
 
   egress {
+    description = "UDP 1514 to Hub Wazuh"
+    from_port   = 1514
+    to_port     = 1514
+    protocol    = "udp"
+    cidr_blocks = [var.hub_vpc_cidr]
+  }
+
+  egress {
+    description = "TCP 55000 to Hub Wazuh (enroll)"
+    from_port   = 55000
+    to_port     = 55000
+    protocol    = "tcp"
+    cidr_blocks = [var.hub_vpc_cidr]
+  }
+
+  egress {
+    description = "All other egress"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = merge(local.tags, { Component = "ec2-sg" })
-}
-
-# -----------------------------
-# AMI lookup
-# -----------------------------
-data "aws_ami" "amazon_linux" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
+  tags = merge(local.tags, { Component = "sg-app-ec2" })
 }
 
 # -----------------------------
 # Application Load Balancer
 # -----------------------------
-resource "aws_lb" "this" {
-  name               = "${var.name}-alb"
+resource "aws_lb" "app_alb" {
+  name               = "${local.name}-alb"
   internal           = false
   load_balancer_type = "application"
-  security_groups    = [aws_security_group.alb.id]
-  subnets            = [aws_subnet.dmz_a.id, aws_subnet.dmz_b.id]
+  subnets            = [aws_subnet.public_a.id]
+  security_groups    = [aws_security_group.alb_sg.id]
   tags               = merge(local.tags, { Component = "alb" })
 }
 
-resource "aws_lb_target_group" "app" {
-  name     = "${var.name}-tg"
-  port     = 80
-  protocol = "HTTP"
-  vpc_id   = aws_vpc.this.id
-
-  health_check {
-    path                = "/"
-    protocol            = "HTTP"
-    interval            = 30
-    timeout             = 5
-    healthy_threshold   = 2
-    unhealthy_threshold = 2
-  }
-
-  tags = merge(local.tags, { Component = "tg" })
-}
-
-resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.this.arn
-  port              = "80"
-  protocol          = "HTTP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.app.arn
-  }
-}
-
 # -----------------------------
-# HA EC2: Launch Template + Auto Scaling Group
+# EC2 App Instance
 # -----------------------------
-resource "aws_launch_template" "app" {
-  name_prefix              = "${var.name}-lt-"
-  image_id                 = data.aws_ami.amazon_linux.id
-  instance_type            = "t3.micro"
-  vpc_security_group_ids   = [aws_security_group.app_ec2.id]
+resource "aws_instance" "app_instance" {
+  ami                         = var.app_ami_id
+  instance_type               = var.app_instance_type
+  subnet_id                   = aws_subnet.private_a.id
+  associate_public_ip_address = false
+  vpc_security_group_ids      = [aws_security_group.app_ec2_sg.id]
+  iam_instance_profile        = var.app_instance_profile_name
 
-  user_data = base64encode(<<-EOF
-              #!/bin/bash
-              yum update -y
-              yum install -y httpd
-              systemctl enable httpd
-              systemctl start httpd
-              echo "<h1>${var.name} - $(hostname)</h1>" > /var/www/html/index.html
-              EOF
-  )
-
-  tag_specifications {
-    resource_type = "instance"
-    tags = merge(local.tags, { Component = "app-ec2" })
-  }
-
-  tags = merge(local.tags, { Component = "lt" })
-}
-
-resource "aws_autoscaling_group" "app" {
-  name                      = "${var.name}-asg"
-  min_size                  = 2
-  max_size                  = 4
-  desired_capacity          = 2
-  vpc_zone_identifier       = [aws_subnet.app_a.id, aws_subnet.app_b.id]
-  health_check_type         = "ELB"
-  health_check_grace_period = 90
-  target_group_arns         = [aws_lb_target_group.app.arn]
-
-  launch_template {
-    id      = aws_launch_template.app.id
-    version = "$Latest"
-  }
-
-  tag {
-    key                 = "Name"
-    value               = "${var.name}-ec2"
-    propagate_at_launch = true
-  }
-  tag {
-    key                 = "Component"
-    value               = "asg"
-    propagate_at_launch = true
-  }
-  tag {
-    key                 = "Stack"
-    value               = "app-spoke"
-    propagate_at_launch = true
-  }
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  depends_on = [aws_lb_listener.http]
-}
-
-# -----------------------------
-# (Optional) Gateway VPC Endpoints to cut NAT data $/GB
-# -----------------------------
-resource "aws_vpc_endpoint" "s3" {
-  count             = var.enable_gateway_endpoints ? 1 : 0
-  vpc_id            = aws_vpc.this.id
-  service_name      = "com.amazonaws.${var.region}.s3"
-  vpc_endpoint_type = "Gateway"
-
-  route_table_ids = [
-    aws_route_table.app_private.id,
-    aws_route_table.dmz.id
-  ]
-
-  tags = merge(local.tags, { Component = "vpce-s3" })
-}
-
-resource "aws_vpc_endpoint" "dynamodb" {
-  count             = var.enable_gateway_endpoints ? 1 : 0
-  vpc_id            = aws_vpc.this.id
-  service_name      = "com.amazonaws.${var.region}.dynamodb"
-  vpc_endpoint_type = "Gateway"
-
-  route_table_ids = [
-    aws_route_table.app_private.id,
-    aws_route_table.dmz.id
-  ]
-
-  tags = merge(local.tags, { Component = "vpce-dynamodb" })
+  tags = merge(local.tags, {
+    Name = "${local.name}-app-ec2"
+    Role = "application"
+  })
 }

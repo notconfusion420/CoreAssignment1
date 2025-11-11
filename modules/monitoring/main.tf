@@ -1,8 +1,13 @@
 locals {
-  tags = merge(var.tags, { Name = var.name, Stack = "monitoring" })
+  name = var.name
+  tags = merge(
+    try(var.tags, {}),
+    { Name = local.name }
+  )
 }
 
-# Find latest Amazon Linux 2 AMI
+
+# AMI
 data "aws_ami" "amazon_linux" {
   most_recent = true
   owners      = ["amazon"]
@@ -18,7 +23,7 @@ data "aws_ami" "amazon_linux" {
   }
 }
 
-# Security Group for Prometheus + Grafana
+# SG for Prometheus + Grafana
 resource "aws_security_group" "this" {
   name        = "${var.name}-mon-sg"
   description = "Monitoring SG"
@@ -39,6 +44,13 @@ resource "aws_security_group" "this" {
     protocol    = "tcp"
     cidr_blocks = var.allowed_cidrs
   }
+  ingress {
+    description = "tcp"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = var.allowed_cidrs
+  }
 
   egress {
     from_port   = 0
@@ -50,31 +62,57 @@ resource "aws_security_group" "this" {
   tags = merge(local.tags, { Component = "sg-monitoring" })
 }
 
-# Monitoring EC2 (key-based login)
+# EC2 that runs Prometheus + Grafana
 resource "aws_instance" "this" {
   ami                    = data.aws_ami.amazon_linux.id
   instance_type          = var.instance_type
   subnet_id              = var.subnet_id
   vpc_security_group_ids = [aws_security_group.this.id]
-  key_name               = var.key_name   # <-- your EC2 key pair
+  key_name               = "monitoring-key"
 
-user_data = <<-EOF
-  #!/bin/bash
-  set -e
-  yum update -y
-  amazon-linux-extras install docker -y || yum install -y docker
-  systemctl enable docker
-  systemctl start docker
-  usermod -aG docker ec2-user
-  # Prometheus
-  docker run -d --name prometheus --restart unless-stopped \
-    -p 9090:9090 prom/prometheus
-  # Grafana
-  docker run -d --name grafana --restart unless-stopped \
-    -p 3000:3000 \
-    -e GF_SECURITY_ADMIN_PASSWORD=admin \
-    grafana/grafana
-EOF
+  user_data = <<-EOF
+#!/bin/bash
+set -e
+yum update -y
+amazon-linux-extras install docker -y || yum install -y docker
+systemctl enable docker
+systemctl start docker
+usermod -aG docker ec2-user
+
+mkdir -p /opt/prometheus
+
+cat >/opt/prometheus/prometheus.yml <<'PROMCFG'
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus-self'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'aws-app-ec2'
+    static_configs:
+      - targets:
+          - 10.1.2.10:9100
+          - 10.1.4.12:9100
+  - job_name: 'wazuh-scrape'
+    static_configs:
+      - targets:
+          - 10.1.2.10:1415
+
+PROMCFG
+
+docker run -d --name prometheus --restart unless-stopped \
+  -p 9090:9090 \
+  -v /opt/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml \
+  prom/prometheus
+
+docker run -d --name grafana --restart unless-stopped \
+  -p 3000:3000 \
+  -e GF_SECURITY_ADMIN_PASSWORD=admin \
+  grafana/grafana
+  EOF
 
   tags = merge(local.tags, { Component = "monitoring-ec2" })
 }
+

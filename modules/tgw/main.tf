@@ -1,8 +1,12 @@
-# modules/tgw/main.tf
 locals {
   name = var.name
-  tags = merge(var.tags, { Name = local.name })
+  tags = merge(
+    try(var.tags, {}),
+    { Name = local.name }
+  )
 }
+
+
 
 resource "aws_ec2_transit_gateway" "this" {
   description                     = "${local.name} TGW"

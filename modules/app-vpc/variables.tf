@@ -1,34 +1,33 @@
 variable "name" {
-  description = "Name prefix for this App VPC"
+  description = "App"
   type        = string
 }
 
-variable "region" {
-  description = "AWS region"
-  type        = string
+variable "tags" {
+  description = "Tags applied to resources"
+  type        = map(string)
+  default     = {}
 }
-variable "spoke_cidrs" {
-  description = "CIDRs reachable via TGW (Hub, DB, Data)"
-  type        = list(string)
-  default     = []
-}
+
 
 variable "vpc_cidr" {
-  description = "CIDR block for the App VPC"
+  description = "CIDR for the VPC"
   type        = string
-  default     = "10.1.0.0/16"
+}
+
+variable "public_a_cidr" {
+  description = "CIDR for public subnet"
+  type        = string
+}
+
+variable "private_a_cidr" {
+  description = "CIDR for private subnet"
+  type        = string
 }
 
 variable "az_a" {
-  description = "First AZ"
+  description = "Availability zone"
   type        = string
-  default     = "eu-central-1a"
-}
-
-variable "az_b" {
-  description = "Second AZ"
-  type        = string
-  default     = "eu-central-1b"
 }
 
 variable "tgw_id" {
@@ -36,26 +35,27 @@ variable "tgw_id" {
   type        = string
 }
 
-variable "tgw_route_table_id" {
-  description = "Transit Gateway Route Table to associate/propagate into"
+variable "spoke_cidrs" {
+  description = "List of spoke CIDRs (Hub/Data/DB)"
+  type        = list(string)
+}
+
+variable "hub_vpc_cidr" {
+  description = "Hub VPC CIDR for security group rules"
   type        = string
 }
 
-variable "tags" {
-  type    = map(string)
-  default = {}
-}
-
-
-# Hub DNS EC2 private IP (from hub module output dns_instance_private_ip)
-variable "hub_dns_ip" {
-  description = "Private IP of the hub dnsmasq EC2 used as primary DNS via DHCP options"
+variable "app_ami_id" {
+  description = "AMI ID for App EC2 instance"
   type        = string
 }
 
-# Toggle cheap Gateway VPC Endpoints (S3/DynamoDB) to reduce NAT $/GB
-variable "enable_gateway_endpoints" {
-  description = "Create S3/DynamoDB Gateway VPC Endpoints in this spoke"
-  type        = bool
-  default     = true
+variable "app_instance_type" {
+  description = "Instance type for App EC2"
+  type        = string
+}
+
+variable "app_instance_profile_name" {
+  description = "IAM instance profile for App EC2 (with SSM)"
+  type        = string
 }

@@ -1,9 +1,12 @@
-# -----------------------------
-# General
-# -----------------------------
 variable "name" {
-  description = "Name prefix for resources"
+  description = "db"
   type        = string
+}
+
+variable "tags" {
+  description = "Tags applied to resources"
+  type        = map(string)
+  default     = {}
 }
 
 variable "region" {
@@ -29,9 +32,6 @@ variable "az_b" {
   default     = "eu-central-1b"
 }
 
-# -----------------------------
-# TGW + Spoke Integration
-# -----------------------------
 variable "tgw_id" {
   description = "Transit Gateway ID"
   type        = string
@@ -49,18 +49,12 @@ variable "spoke_cidrs" {
   default     = []
 }
 
-# -----------------------------
-# Shared Services
-# -----------------------------
 variable "enable_s3_gateway_endpoint" {
   description = "Enable Gateway VPC Endpoint for S3 (reduces NAT egress)"
   type        = bool
   default     = true
 }
 
-# -----------------------------
-# RDS Parameters
-# -----------------------------
 variable "rds_engine" {
   description = "RDS engine type (mysql, postgres, etc.)"
   type        = string
@@ -103,9 +97,6 @@ variable "rds_password" {
   sensitive   = true
 }
 
-# -----------------------------
-# Redis Parameters
-# -----------------------------
 variable "redis_node_type" {
   description = "Instance type for Redis"
   type        = string
@@ -124,18 +115,12 @@ variable "redis_engine_version" {
   default     = "7.1"
 }
 
-# -----------------------------
-# Network Security
-# -----------------------------
 variable "ingress_cidrs" {
   description = "CIDRs allowed to reach RDS (3306) and Redis (6379)"
   type        = list(string)
   default     = ["10.0.0.0/8"]
 }
 
-# -----------------------------
-# S3 / CloudFront
-# -----------------------------
 variable "enable_s3" {
   description = "Deploy S3 bucket for static assets/backups"
   type        = bool
@@ -152,15 +137,6 @@ variable "enable_cloudfront" {
   description = "Deploy CloudFront distribution in front of S3"
   type        = bool
   default     = false
-}
-
-# -----------------------------
-# Tags
-# -----------------------------
-variable "tags" {
-  description = "Extra tags to merge with defaults"
-  type        = map(string)
-  default     = {}
 }
 
 variable "hub_dns_ip" {

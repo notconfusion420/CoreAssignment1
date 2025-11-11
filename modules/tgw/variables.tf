@@ -1,7 +1,14 @@
 variable "name" {
-  description = "Name for the TGW"
+  description = "TGW"
   type        = string
 }
+
+variable "tags" {
+  description = ""
+  type        = map(string)
+  default     = {}
+}
+
 
 variable "amazon_side_asn" {
   description = "ASN for the TGW (should not overlap with on-prem BGP ASN)"
@@ -9,8 +16,3 @@ variable "amazon_side_asn" {
   default     = 64512
 }
 
-variable "tags" {
-  description = "Additional tags"
-  type        = map(string)
-  default     = {}
-}

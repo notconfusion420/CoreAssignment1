@@ -1,8 +1,11 @@
-# modules/db-vpc/main.tf
 locals {
   name = var.name
-  tags = merge(var.tags, { Name = local.name, Stack = "db-spoke" })
+  tags = merge(
+    try(var.tags, {}),
+    { Name = local.name }
+  )
 }
+
 
 resource "aws_vpc" "this" {
   cidr_block           = var.vpc_cidr
@@ -273,11 +276,11 @@ resource "aws_s3_bucket_policy" "data" {
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Sid      = "AllowCloudFrontOAC",
-      Effect   = "Allow",
+      Sid       = "AllowCloudFrontOAC",
+      Effect    = "Allow",
       Principal = { Service = "cloudfront.amazonaws.com" },
-      Action   = ["s3:GetObject"],
-      Resource = ["${aws_s3_bucket.data[0].arn}/*"],
+      Action    = ["s3:GetObject"],
+      Resource  = ["${aws_s3_bucket.data[0].arn}/*"],
       Condition = { StringEquals = { "AWS:SourceArn" : aws_cloudfront_distribution.this[0].arn } }
     }]
   })
